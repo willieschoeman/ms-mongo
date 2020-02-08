@@ -27,15 +27,30 @@ var client *mongo.Client
 ----------------------
 */
 
-// Insert a document
-func Insert(response http.ResponseWriter, request *http.Request) {
+// Action a document
+func Action(response http.ResponseWriter, request *http.Request) {
 	
 	response.Header().Set("content-type", "application/json")
 
+	// Params
 	params := mux.Vars(request)
 	db := params["db"]
 	coll := params["coll"]
 
+	// Check Params
+	if db == "" {
+		response.WriteHeader(http.StatusInternalServerError)
+		response.Write([]byte(`{ "message": "Missing DB!" }`))
+		return
+	}
+
+	if coll == "" {
+		response.WriteHeader(http.StatusInternalServerError)
+		response.Write([]byte(`{ "message": "Missing Collection!" }`))
+		return
+	}
+
+	// Decode Body
 	var document interface{}
 
 	err := json.NewDecoder(request.Body).Decode(&document)
@@ -45,140 +60,150 @@ func Insert(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	collection := client.Database(db).Collection(coll)
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	result, err := collection.InsertOne(ctx, document)
+	// Get Action
+	var action interface{}
 
-	if err != nil {
+	if val, ok := document.(map[string]interface{})["action"]; ok {
+		action = val
+	} else {
 		response.WriteHeader(http.StatusInternalServerError)
-		response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
+		response.Write([]byte(`{ "message": "Missing Action!" }`))
 		return
 	}
 
-	json.NewEncoder(response).Encode(result)
-}
+	// Query and data
+	var query interface{}
+	var data interface{}
+	var hasQuery bool
+	var hasData bool
 
-// Get document(s)
-func Get(response http.ResponseWriter, request *http.Request) {
-
-	response.Header().Set("content-type", "application/json")
-
-	params := mux.Vars(request)
-	db := params["db"]
-	coll := params["coll"]
-
-	query := bson.M{}
-	var documents []interface{}
-
-	if len(request.URL.Query()) != 0 {
-
-		queryParams := request.URL.Query()
-
-		for key, value := range queryParams {
-			query[key] = value[0]
-		}
+	// Get query
+	if val, ok := document.(map[string]interface{})["query"]; ok {
+		query = val
+		hasQuery = ok
 	}
-
-	collection := client.Database(db).Collection(coll)
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
-	cursor, err := collection.Find(ctx, query)
-
-	if err != nil {
-		response.WriteHeader(http.StatusInternalServerError)
-		response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
-		return
-	}
-
-	defer cursor.Close(ctx)
-
-	for cursor.Next(ctx) {
-		var document interface{}
-		cursor.Decode(&document)
-		documents = append(documents, document)
-	}
-
-	if err := cursor.Err(); err != nil {
-		response.WriteHeader(http.StatusInternalServerError)
-		response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
-		return
-	}
-
-	json.NewEncoder(response).Encode(documents)
-
-}
-
-// Update document(s)
-func Update(response http.ResponseWriter, request *http.Request) {
 	
-	response.Header().Set("content-type", "application/json")
+	// Get data
+	if val, ok := document.(map[string]interface{})["data"]; ok {
+		data = val
+		hasData = ok
+	}
 
-	params := mux.Vars(request)
-	db := params["db"]
-	coll := params["coll"]
+	switch action {
 
-	query := bson.M{}
-	var document interface{}
+	// Insert a document
+	case "insert":
 
-	if len(request.URL.Query()) != 0 {
-
-		queryParams := request.URL.Query()
-
-		for key, value := range queryParams {
-			query[key] = value[0]
+		if !hasData {
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Write([]byte(`{ "message": "Missing Data!" }`))
+			return
 		}
-	}
 
-	err := json.NewDecoder(request.Body).Decode(&document)
-	if err != nil {
-		response.WriteHeader(http.StatusInternalServerError)
-		response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
-		return
-	}
+		collection := client.Database(db).Collection(coll)
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+		result, err := collection.InsertOne(ctx, data)
 
-	collection := client.Database(db).Collection(coll)
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	result, err := collection.UpdateMany(ctx, query, bson.M{"$set": document})
+		if err != nil {
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
+			return
+		}
 
-	if err != nil {
-		response.WriteHeader(http.StatusInternalServerError)
-		response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
-		return
-	}
+		json.NewEncoder(response).Encode(result)
+		
+	// Get a document
+	case "get":
 
-	json.NewEncoder(response).Encode(result)
-}
+		if !hasQuery {
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Write([]byte(`{ "message": "Missing Query!" }`))
+			return
+		}
 
-// Delete document(s)
-func Delete(response http.ResponseWriter, request *http.Request) {
+		var documents []interface{}
+
+		collection := client.Database(db).Collection(coll)
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+		cursor, err := collection.Find(ctx, query)
 	
-	response.Header().Set("content-type", "application/json")
-
-	params := mux.Vars(request)
-	db := params["db"]
-	coll := params["coll"]
-
-	query := bson.M{}
-
-	if len(request.URL.Query()) != 0 {
-
-		queryParams := request.URL.Query()
-
-		for key, value := range queryParams {
-			query[key] = value[0]
+		if err != nil {
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
+			return
 		}
-	}
+	
+		defer cursor.Close(ctx)
+	
+		for cursor.Next(ctx) {
+			var document interface{}
+			cursor.Decode(&document)
+			documents = append(documents, document)
+		}
+	
+		if err := cursor.Err(); err != nil {
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
+			return
+		}
+	
+		json.NewEncoder(response).Encode(documents)
 
-	collection := client.Database(db).Collection(coll)
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	result, err := collection.DeleteMany(ctx, query)
+	// Update a document
+	case "upate":
+		
+		if !hasQuery {
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Write([]byte(`{ "message": "Missing Query!" }`))
+			return
+		}
 
-	if err != nil {
+		if !hasData {
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Write([]byte(`{ "message": "Missing Data!" }`))
+			return
+		}
+
+		collection := client.Database(db).Collection(coll)
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+		result, err := collection.UpdateMany(ctx, query, bson.M{"$set": data})
+	
+		if err != nil {
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
+			return
+		}
+	
+		json.NewEncoder(response).Encode(result)
+
+	// Delete a document
+	case "delete":
+
+		if !hasQuery {
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Write([]byte(`{ "message": "Missing Query!" }`))
+			return
+		}
+
+		collection := client.Database(db).Collection(coll)
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+		result, err := collection.DeleteMany(ctx, query)
+	
+		if err != nil {
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
+			return
+		}
+	
+		json.NewEncoder(response).Encode(result)
+	
+	// Default for wrong action
+	default:
 		response.WriteHeader(http.StatusInternalServerError)
-		response.Write([]byte(`{ "message": "` + err.Error() + `" }`))
+		response.Write([]byte(`{ "message": "Unknown Action!" }`))
 		return
 	}
 
-	json.NewEncoder(response).Encode(result)
 }
 
 /* 
@@ -222,10 +247,7 @@ func main() {
 
 	// New router and listen
 	router := mux.NewRouter()
-	router.HandleFunc("/mongo/{db}/{coll}", Insert).Methods("POST")
-	router.HandleFunc("/mongo/{db}/{coll}", Get).Methods("GET")
-	router.HandleFunc("/mongo/{db}/{coll}", Update).Methods("PUT")
-	router.HandleFunc("/mongo/{db}/{coll}", Delete).Methods("DELETE")
+	router.HandleFunc("/ms-mongo/{db}/{coll}", Action).Methods("POST")
 	log.Println("Router listening...")
 	log.Fatal(http.ListenAndServe(":32345", handlers.CORS(originsOk, headersOk, methodsOk)(router)))
 }
