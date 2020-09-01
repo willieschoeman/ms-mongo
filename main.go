@@ -150,7 +150,7 @@ func Action(response http.ResponseWriter, request *http.Request) {
 		json.NewEncoder(response).Encode(documents)
 
 	// Update a document
-	case "upate":
+	case "update":
 		
 		if !hasQuery {
 			response.WriteHeader(http.StatusInternalServerError)
